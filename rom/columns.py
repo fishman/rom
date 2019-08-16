@@ -610,6 +610,20 @@ class Text(Column):
             return value.decode('utf-8')
         return value
 
+class Binary(Column):
+    '''
+    A binary column
+    Used via::
+
+        class MyModel(Model):
+            col = Binary()
+    '''
+    _allowed = six.binary_type
+    def _to_redis(self, value):
+        return value
+    def _from_redis(self, value):
+        return value
+
 class Json(Column):
     '''
     Allows for more complicated nested structures as attributes.
