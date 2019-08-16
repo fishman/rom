@@ -22,6 +22,8 @@ from .util import (_numeric_keygen, _string_keygen, _many_to_one_keygen,
     _boolean_keygen, dt2ts, ts2dt, t2ts, ts2t, session, _connect,
     STRING_INDEX_KEYGENS_STR)
 
+from .wrappers import ListWrapper, SetWrapper, HashWrapper, ZsetWrapper
+
 
 NULL = object()
 MODELS = {}
@@ -830,7 +832,7 @@ class ManyToOne(Column):
             value.save()
         v = str(getattr(value, value._pkey))
         return v
-    
+
     def get_related_model(self):
         try:
             model = MODELS[self._ftable]
@@ -986,13 +988,107 @@ class OneToMany(Column):
 
     def __delete__(self, obj):
         raise InvalidOperation("Cannot delete OneToMany relationships")
-    
+
     def get_related_model(self):
         try:
             model = MODELS[self._ftable]
         except KeyError:
             model = None
         return model
+
+class UnsafeColumn(object):
+    '''
+    UnsafeColumns are attributes on models that allow for explicit model-related
+    data to be stored in native Redis lists, sets, hashes, and sorted sets. Data
+    stored in these columns are not synchronized with the underlying
+    race-condition-prevention locking mechanism used during ``Model.save()``
+    and ``Model.delete()``, though this data is deleted during ``Model.delete()``.
+
+    If it so happens that::
+
+        >>> rom.util.use_null_session()
+        >>> class MyModel(rom.Model):
+        ...    tlist = rom.UnsafeList()
+        ...
+        >>> a = MyModel()
+        >>> a.save()
+        1
+        >>> b = Model.get(a.id)
+        >>> assert a != b
+        >>> a.delete()
+        >>> b.tlist.append('test')
+
+
+    Use of rom.util.
+
+
+    '''
+    __slots__ = '_attr', '_type'
+    def __init__(self, type):
+        '''
+        Unless you've done something weird to rom, all non-unsafe column data is
+        stored in a key of the form: ``'%s:%s' % (ent._namespace, ent._pkey)``
+
+
+
+        By default, UnsafeColumn data is stored:
+        ``'%s:%s:%s' % (ent._namespace, ent._pkey, column_name)``
+
+        PrimaryKey column is not `id`).
+
+        By default, UnsafeColumn data is stored separate in their own keys,
+
+
+        '''
+        self._attr = None
+        self._type = type
+
+    def _init_(self, attr):
+        self._attr = attr
+
+    def __get__(self, obj, objtype):
+        if not obj or not self._attr:
+            raise AttributeError
+
+        if self._attr not in obj._cached_unsafe:
+            obj._cached_unsafe[self._attr] = self._type(self._key(obj), obj)
+
+        return obj._cached_unsafe[self._attr]
+
+    def __set__(self, obj, value):
+        if not obj or not self._attr:
+            raise AttributeError
+
+        if self._attr not in obj._cached_unsafe:
+            obj._cached_unsafe[self._attr] = self._type(self._key(obj))
+        obj._cached_unsafe[self._attr]._set(value)
+
+    def __delete__(self, obj):
+        if not obj or not self._attr:
+            raise AttributeError
+
+        obj._cached_unsafe.pop(self._attr, None)
+        return obj._connection.delete(self._key(obj))
+
+    def _key(self, obj):
+        return '%s:%s' % (obj._pkey, self._attr)
+
+class UnsafeList(UnsafeColumn):
+    def __init__(self, encode=None, decode=None):
+        UnsafeColumn.__init__(self, ListWrapper, encode, decode)
+
+class UnsafeSet(UnsafeColumn):
+    def __init__(self, encode=None, decode=None):
+        UnsafeColumn.__init__(self, SetWrapper, encode, decode)
+
+class UnsafeHash(UnsafeColumn):
+    def __init__(self, encode=None, decode=None):
+        UnsafeColumn.__init__(self, HashWrapper, encode, decode)
+
+class UnsafeZset(UnsafeColumn):
+    def __init__(self, encode=None, decode=None):
+        UnsafeColumn.__init__(self, ZsetWrapper, encode, decode)
+
 
 COLUMN_TYPES = [v for v in globals().values() if isinstance(v, type) and issubclass(v, Column)]
 __all__ = [v.__name__ for v in COLUMN_TYPES] + 'MODELS MODELS_REFERENCED ON_DELETE'.split()

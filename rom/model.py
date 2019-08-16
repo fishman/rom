@@ -649,6 +649,8 @@ class Model(six.with_metaclass(_ModelMetaclass, object)):
                     # Handle the ranges where None is -inf on the left and inf
                     # on the right when used in the context of a range tuple.
                     args[i] = ('-inf', 'inf')[i] if a is None else cls._columns[attr]._to_redis(a)
+                    # if args[i] is None and a is not None:
+                    #     args[i] = a
                 if _limit:
                     args.extend(_limit)
                 ids = conn.zrangebyscore('%s:%s:idx'%(model, attr), *args)
